@@ -1,0 +1,36 @@
+language: node_js
+
+node_js:
+  - "0.10"
+  - "0.12"
+  - "4"
+  - "5"
+
+before_install:
+  - npm install -g grunt-cli
+
+notifications:
+  email:
+    on_success: never
+    on_failure: change
+
+deploy:
+  provider: npm
+  email: eldar.abusalimov@gmail.com
+  api_key:
+    secure: "\
+        WVMP7EBxC/jiNwULRjc39EVs4rtISrjpOuUTs6wyF0YHGEMUa3GOWTki3\
+        GdCPmKliWQAYrl04iNgOm5r9juebEdq+9ccBgVwSUZqqcCh19tcu0clJn\
+        b8GD3y4vjh/SPvK1kB1YDfv5VDp54iZ/JUJ/z1Mw9Uz6hPZIWXRjvHhkc\
+        nZBLYdmRpOrr7xGnRKrBzFHAizBis17NKO23Xb5fqayXitrl86he68EJz\
+        vXK1bRuXqCPsE7CxSabEX+u4tb5potA1qU677i3BPYRadvOK2xfKlAkBL\
+        LEYd7OGnw9Q7VmXF2bxYhHpaBkQqBBV9Hsx7nEWT+EyQFEhO6zeFVjMHM\
+        etYF4Can2xK3JuZkFBYNAtDg2FXo+7L7AWfsRJxz/LBo4E0pfepPVsrG3\
+        i7C1rC+jbQ5sAXYZd06q9+Rbsrlq+Wdnh/8PMz6BEj0uGjYcFKFsL1w5v\
+        vmpVUJt9rFEjad/XuNL74SANoQXznd3nHsGFsLQHK8UdEGr9DuxuBVPZq\
+        vxUGLf55EE8XNg0dMeVtFofGDjfa6sunEyxTzPHsKzSB/ZJ7+ltNqygzg\
+        soOhGJytuw8WJaPOBJL1whyteZ762451MUvG1CUYX1MTHS/5Febl5H5ZI\
+        JL11CIbq5LSt2Zzhc02rPKTY+ZoaRihl9WYcHllJqoMpwqkbiL7GbbNI="
+  on:
+    tags: true
+    repo: abusalimov/js-sixteen-dollar-macros

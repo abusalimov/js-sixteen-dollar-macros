@@ -1,0 +1,42 @@
+{
+  "name": "sixteen-dollar-macros",
+  "version": "0.0.0",
+  "description": "Template engine for generic JS objects, or YAML with macros",
+  "main": "lib/template.js",
+  "scripts": {
+    "grunt": "grunt",
+    "test": "grunt test",
+    "prepublish": "grunt prepublish"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/abusalimov/js-sixteen-dollar-macros.git"
+  },
+  "keywords": [
+    "template",
+    "preprocessor",
+    "macros",
+    "variables",
+    "yaml",
+    "cson"
+  ],
+  "author": "Eldar Abusalimov <eldar.abusalimov@gmail.com>",
+  "license": "MIT",
+  "bugs": {
+    "url": "https://github.com/abusalimov/js-sixteen-dollar-macros/issues"
+  },
+  "homepage": "https://github.com/abusalimov/js-sixteen-dollar-macros#readme",
+  "devDependencies": {
+    "grunt": "^0.4.5",
+    "grunt-contrib-clean": "^1.0.0",
+    "grunt-contrib-coffee": "^1.0.0",
+    "grunt-jasmine-nodejs": "^1.5.1"
+  },
+  "dependencies": {
+    "lodash": "^4.5.1",
+    "source-map-support": "^0.4.0"
+  },
+  "engines": {
+    "node" : ">=0.10"
+  }
+}

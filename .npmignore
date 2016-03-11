@@ -1,0 +1,6 @@
+spec/
+src/
+*.coffee
+.git*
+.npmignore
+.travis.yml
