@@ -1,6 +1,6 @@
 {
   "name": "sixteen-dollar-macros",
-  "version": "0.0.0",
+  "version": "0.0.1",
   "description": "Template engine for generic JS objects, or YAML with macros",
   "main": "lib/template.js",
   "scripts": {
