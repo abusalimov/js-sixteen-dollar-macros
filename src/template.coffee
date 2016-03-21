@@ -36,6 +36,21 @@ class KeyValueNode extends Node
   ]
 
 
+class WrapperNode extends Node
+  @wrappedFieldName = 'node'
+
+  @wrap: (node, children) ->
+    wrappedChild = {"#{@wrappedFieldName}": node}
+    new this node.object, _.extend wrappedChild, children
+
+
+class ScopeNode extends WrapperNode
+  @defineChildrenFields [
+    {node: 'node'}
+    {variables: 'mapping'}
+  ]
+
+
 nodeFromObject = (object) ->
   switch
     when isPlainObject object
@@ -59,6 +74,13 @@ nodeToObject = (node) ->
 
 
 class NodeToObject extends NodeVisitor
+
+  visitScopeNode: ({node, variables}) ->
+    unless isPlainObject object = @visit node
+      object = {'$': object}
+
+    _.extend {'$%': _.mapValues variables, (value) => @visit value}, object
+
   visitFunctionNode: ({object}) -> object
   visitStringNode: ({object}) -> object
   visitPrimitiveNode: ({object}) -> object
@@ -70,6 +92,57 @@ class NodeToObject extends NodeVisitor
     _.mapValues mapping, (keyValue) => @visit keyValue
 
   visitKeyValueNode: ({value}) -> @visit value
+
+
+class ParsePass extends NodeTransformer
+
+  visitObjectNode: (node) ->
+    variables = {}
+    dollarNode = null
+
+    node = @genericVisit node,
+      defineVariables: (scopeMapping) =>
+        for name, {value} of scopeMapping
+          if name of variables
+            throw new CompileError "Duplicate variable definition: '#{name}'"
+
+          variables[name] = @visit value
+        return
+
+      defineExpansion: (value) =>
+        if dollarNode?
+          throw new CompileError "Multiple '$:' expansions in a single object"
+        dollarNode = @visit value
+
+    if dollarNode?
+      unless _.isEmpty node.mapping
+        throw new CompileError "Mixed '$:' expansion and regular object keys"
+      node = dollarNode
+
+    unless _.isEmpty variables
+      node = ScopeNode.wrap node, {variables}
+
+    node
+
+  visitKeyValueNode: (node, actions) ->
+    {key, value} = node
+    [all, dollar, directive, name] = /^(\$(%)?)?(.*)$/.exec key.object
+
+    switch
+      when directive  # $%...: ...
+        actions.defineVariables \
+          if name  # $%name: ...
+            {"#{name}": node}
+          else  # $%: ...
+            Node.checkType(value, ObjectNode).mapping
+        return
+
+      when dollar and not name  # $: ...
+        actions.defineExpansion value
+        return
+
+      else
+        @genericVisit node
 
 
 expand = (tmpl) ->
@@ -92,8 +165,13 @@ module.exports = {
   ObjectNode
   KeyValueNode
 
+  WrapperNode
+  ScopeNode
+
   nodeFromObject
   nodeToObject
+
+  ParsePass
 
   expand
 
