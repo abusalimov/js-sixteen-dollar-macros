@@ -74,3 +74,12 @@ describe 'template', ->
               hello: 'World'
           '$': 'Hello'
         }
+
+    it "should recognize '$!' object assign directive", ->
+      expect(parseCompileDump obj = {
+          '$%':
+            var: 'value'
+          '$!':
+            foo: 'bar'
+          '$': 'Hello'
+        }).toEqual obj

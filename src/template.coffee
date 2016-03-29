@@ -51,6 +51,14 @@ class ScopeNode extends WrapperNode
   ]
 
 
+class AssignNode extends WrapperNode
+  @defineChildrenFields [
+    {target: 'node'}
+    {assign: 'node'}
+  ]
+  @wrappedFieldName = 'target'
+
+
 nodeFromObject = (object) ->
   switch
     when isPlainObject object
@@ -81,6 +89,12 @@ class NodeToObject extends NodeVisitor
 
     _.extend {'$%': _.mapValues variables, (value) => @visit value}, object
 
+  visitAssignNode: ({target, assign}) ->
+    unless isPlainObject object = @visit target
+      object = {'$': object}
+
+    _.extend {'$!': @visit assign}, object
+
   visitFunctionNode: ({object}) -> object
   visitStringNode: ({object}) -> object
   visitPrimitiveNode: ({object}) -> object
@@ -99,6 +113,7 @@ class ParsePass extends NodeTransformer
   visitObjectNode: (node) ->
     variables = {}
     dollarNode = null
+    assignNode = null
 
     node = @genericVisit node,
       defineVariables: (scopeMapping) =>
@@ -114,10 +129,18 @@ class ParsePass extends NodeTransformer
           throw new CompileError "Multiple '$:' expansions in a single object"
         dollarNode = @visit value
 
+      defineAssignment: (value) =>
+        if assignNode?
+          throw new CompileError "Multiple '$!:' directives in a single object"
+        assignNode = @visit value
+
     if dollarNode?
       unless _.isEmpty node.mapping
         throw new CompileError "Mixed '$:' expansion and regular object keys"
       node = dollarNode
+
+    if assignNode?
+      node = AssignNode.wrap node, {assign: assignNode}
 
     unless _.isEmpty variables
       node = ScopeNode.wrap node, {variables}
@@ -126,15 +149,19 @@ class ParsePass extends NodeTransformer
 
   visitKeyValueNode: (node, actions) ->
     {key, value} = node
-    [all, dollar, directive, name] = /^(\$(%)?)?(.*)$/.exec key.object
+    [all, dollar, directive, name] = /^(\$([%!])?)?(.*)$/.exec key.object
 
     switch
-      when directive  # $%...: ...
+      when directive is '%'  # $%...: ...
         actions.defineVariables \
           if name  # $%name: ...
             {"#{name}": node}
           else  # $%: ...
             Node.checkType(value, ObjectNode).mapping
+        return
+
+      when directive is '!' and not name  # $!: ...
+        actions.defineAssignment value
         return
 
       when dollar and not name  # $: ...
@@ -167,6 +194,7 @@ module.exports = {
 
   WrapperNode
   ScopeNode
+  AssignNode
 
   nodeFromObject
   nodeToObject
