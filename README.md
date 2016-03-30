@@ -27,9 +27,7 @@ $16Macros = require 'sixteen-dollar-macros'
 
 ### API
 ```coffee
-result = $16Macros.expand {hey: '$hi!'},
-	variables:
-	  hi: 'Hello World'
+result = $16Macros.expand {hey: '$hi!'}, hi: 'Hello World'
 # {hey: 'Hello World!'}
 ```
 

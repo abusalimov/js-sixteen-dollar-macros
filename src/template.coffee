@@ -17,6 +17,8 @@ require('source-map-support').install()
   NodeVisitorError
 } = require './node'
 
+{checkIt} = require './util'
+
 
 class LeafNode extends Node
 class FunctionNode extends LeafNode
@@ -172,8 +174,74 @@ class ParsePass extends NodeTransformer
         @genericVisit node
 
 
-expand = (tmpl) ->
-  tmpl  # stub!
+class AssemblePass extends NodeVisitor
+
+  visitFunctionNode: ({object: func}) ->
+    -> func
+
+  visitPrimitiveNode: ({object: value}) ->
+    -> value
+
+  visitStringNode: ({object: str}) ->
+    -> str
+
+  visitAssignNode: ({target, assign}) ->
+    targetFunc = @fieldVisit.node target
+    assignFunc = @fieldVisit.node assign
+
+    ->
+      targetExpansion = targetFunc.apply this
+      assignExpansion = assignFunc.apply this
+
+      for value in _.flattenDeep [assignExpansion]
+        _.extend targetExpansion, checkIt isPlainObject: value, 'applied value'
+
+      targetExpansion
+
+
+  visitArrayNode: ({sequence}) ->
+    itemFuncList = @fieldVisit.sequence sequence
+
+    ->
+      for itemFunc in itemFuncList
+        itemFunc.apply this
+
+  visitObjectNode: ({mapping}) ->
+    keyValueFuncEntryMap = @fieldVisit.mapping mapping
+
+    ->
+      result = {}
+
+      for key, entry of keyValueFuncEntryMap
+        {key: keyFunc, value: valueFunc} = entry
+        result[keyFunc.apply this] = valueFunc.apply this
+
+      result
+
+  visitKeyValueNode: ({key, value}) ->
+    @fieldVisit.mapping {key, value}
+
+
+class Compiler
+  constructor: ->
+    @parsePass = new ParsePass
+    @assemblePass = new AssemblePass
+
+  compile: (template) ->
+    node = nodeFromObject template
+    preprocessedNode = @parsePass.visit node
+    nodeDescriptor = @assemblePass.visit preprocessedNode
+    (scope = Object.create null) ->
+      nodeDescriptor.apply scope
+
+
+compile = (template) ->
+  new Compiler().compile template
+
+
+expand = (template, variables) ->
+  func = compile template
+  func variables
 
 
 class TemplateError extends NodeVisitorError
@@ -200,6 +268,10 @@ module.exports = {
   nodeToObject
 
   ParsePass
+  AssemblePass
+
+  Compiler
+  compile
 
   expand
 
