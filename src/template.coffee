@@ -108,8 +108,9 @@ class NodeToObject extends NodeVisitor
     _.extend {'$!': @visit assign}, object
 
   visitFunctionNode: ({object}) -> object
-  visitStringNode: ({object}) -> object
   visitPrimitiveNode: ({object}) -> object
+  visitStringNode: ({object: str}) ->
+    str.replace /[$.}]/g, (char) -> "$#{char}"
 
   visitVariableExpandNode: ({name}) ->
     "${#{@visit name}}"
@@ -190,21 +191,22 @@ class ParsePass extends NodeTransformer
         @genericVisit node
 
   visitStringNode: ({object: str}) ->
-    re = /\$(?:\{(\w+)\}|(\w+))/g
+    re = /\$(?:(\$)|\{(\w+)\}|(\w+))/g
 
     tokens = []
 
     lastEnd = 0
     while match = re.exec str
-      name = match[1] ? match[2]
+      escaped = match[1]
+      name = match[2] ? match[3]
       matchStart = match.index
 
       if s = str.substring lastEnd, matchStart
         tokens.push new StringNode s
+      if name
+        tokens.push new VariableExpandNode name, name: new StringNode name
 
-      tokens.push new VariableExpandNode name, name: new StringNode name
-
-      lastEnd = re.lastIndex
+      lastEnd = re.lastIndex - escaped?  # to grab an escaped char later on
 
     if s = str.substring lastEnd
       tokens.push new StringNode s

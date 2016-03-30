@@ -33,6 +33,7 @@ describe 'template', ->
     it 'should parse/dump ${variable} references properly', ->
       expect(parseCompileDump '${hello}').toEqual '${hello}'
       expect(parseCompileDump '$hello').toEqual '${hello}'
+      expect(parseCompileDump '$$hello').toEqual '$$hello'
 
     it 'should parse/dump objects with special directives properly', ->
       expect(parseCompileDump {'$': 'Hello'}).toEqual 'Hello'
@@ -126,6 +127,10 @@ describe 'template', ->
               compound: ['object']
           '$': '$foo'
         }).toEqual compound: ['object']
+
+    it 'should unescape special chars properly', ->
+      expect(expand '$$$$$$$$$$$$$$$${16} macros')
+        .toEqual '$$$$$$$${16} macros'
 
   describe 'extending objects with $!', ->
     it 'should assign properties from source object', ->
