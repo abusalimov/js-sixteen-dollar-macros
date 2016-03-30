@@ -61,6 +61,16 @@ class AssignNode extends WrapperNode
   @wrappedFieldName = 'target'
 
 
+class VariableExpandNode extends WrapperNode
+  @defineChildrenFields {name: 'node'}
+  @wrappedFieldName = 'name'
+
+
+class StringJoinNode extends WrapperNode
+  @defineChildrenFields {array: 'node'}
+  @wrappedFieldName = 'array'
+
+
 nodeFromObject = (object) ->
   switch
     when isPlainObject object
@@ -100,6 +110,12 @@ class NodeToObject extends NodeVisitor
   visitFunctionNode: ({object}) -> object
   visitStringNode: ({object}) -> object
   visitPrimitiveNode: ({object}) -> object
+
+  visitVariableExpandNode: ({name}) ->
+    "${#{@visit name}}"
+
+  visitStringJoinNode: ({array}) ->
+    @visit(array).join ''
 
   visitArrayNode: ({sequence}) ->
     _.map sequence, (item) => @visit item
@@ -173,6 +189,28 @@ class ParsePass extends NodeTransformer
       else
         @genericVisit node
 
+  visitStringNode: ({object: str}) ->
+    re = /\$(?:\{(\w+)\}|(\w+))/g
+
+    tokens = []
+
+    lastEnd = 0
+    while match = re.exec str
+      name = match[1] ? match[2]
+      matchStart = match.index
+
+      if s = str.substring lastEnd, matchStart
+        tokens.push new StringNode s
+
+      tokens.push new VariableExpandNode name, name: new StringNode name
+
+      lastEnd = re.lastIndex
+
+    if s = str.substring lastEnd
+      tokens.push new StringNode s
+
+    StringJoinNode.wrap new ArrayNode null, sequence: tokens
+
 
 class AssemblePass extends NodeVisitor
 
@@ -209,6 +247,20 @@ class AssemblePass extends NodeVisitor
 
   visitStringNode: ({object: str}) ->
     property value: str
+
+  visitVariableExpandNode: ({name}) ->
+    {value, get} = @fieldVisit.node name
+
+    if get?
+      property get: -> @[get.apply this]
+    else  # probably a hot path
+      property get: -> @[value]
+
+  visitStringJoinNode: ({array}) ->
+    tokenArrayDescriptor = @fieldVisit.node array
+    property get: ->
+      tokenArrayExpansion = tokenArrayDescriptor.apply this
+      tokenArrayExpansion.join ''
 
   visitAssignNode: ({target, assign}) ->
     targetDescriptor = @fieldVisit.node target
@@ -298,6 +350,8 @@ module.exports = {
   WrapperNode
   ScopeNode
   AssignNode
+  VariableExpandNode
+  StringJoinNode
 
   nodeFromObject
   nodeToObject
