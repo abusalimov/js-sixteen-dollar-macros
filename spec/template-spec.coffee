@@ -34,6 +34,7 @@ describe 'template', ->
       expect(parseCompileDump '${hello}').toEqual '${hello}'
       expect(parseCompileDump '$hello').toEqual '${hello}'
       expect(parseCompileDump '$$hello').toEqual '$$hello'
+      expect(parseCompileDump '${$hello}').toEqual '${${hello}}'
 
     it 'should parse/dump objects with special directives properly', ->
       expect(parseCompileDump {'$': 'Hello'}).toEqual 'Hello'
@@ -128,9 +129,21 @@ describe 'template', ->
           '$': '$foo'
         }).toEqual compound: ['object']
 
+    it 'should expand variables with computed names properly', ->
+      expect(expand {
+          '$%':
+            foo: 'dead$bzz'
+            bzz: 'bee'
+            deadbeef: 0xC0FFEE
+          '$': '${${foo}f}'
+        }).toEqual 0xC0FFEE
+
     it 'should unescape special chars properly', ->
       expect(expand '$$$$$$$$$$$$$$$${16} macros')
         .toEqual '$$$$$$$${16} macros'
+
+    it 'should raise an error in case of unterminated expansion braces', ->
+      expect(-> expand '${${foo}f').toThrowError CompileError, /unterminated/i
 
   describe 'extending objects with $!', ->
     it 'should assign properties from source object', ->

@@ -191,33 +191,67 @@ class ParsePass extends NodeTransformer
         @genericVisit node
 
   visitStringNode: ({object: str}) ->
-    re = /\$(?:(\$)|\{(\w+)\}|(\w+))/g
+    @parseString str
+
+  parseString: (str, re) ->
+    unless isExpansion = re?
+      re = /\$(?:([$}])|(\w+)|(\{))|(\})/g  # shared across recursive calls
 
     tokens = []
+    tokens.flush = ->
+      ret =
+        if @length is 1
+          # This allows returning a value of any type (without coercing it
+          # to a string) in case if the whole string consists of the sole
+          # expansion: '${var}'
+          this[0]
+        else
+          StringJoinNode.wrap new ArrayNode null, sequence: this[...]
 
-    lastEnd = 0
+      @length = 0
+      ret
+
+    tokens.pushString = (s) ->
+      if s
+        last = this[@length - 1]
+        if last instanceof StringNode
+          last.object += s
+        else
+          @push new StringNode s
+
+    lastEnd = start = re.lastIndex
     while match = re.exec str
-      escaped = match[1]
-      name = match[2] ? match[3]
-      matchStart = match.index
+      {
+        index: matchStart
+        1: escaped
+        2: name
+        3: lBrace
+        4: rBrace
+      } = match
 
-      if s = str.substring lastEnd, matchStart
-        tokens.push new StringNode s
-      if name
-        tokens.push new VariableExpandNode name, name: new StringNode name
+      unless isExpansion
+        continue if rBrace  # ordinal chars
+
+      tokens.pushString str.substring lastEnd, matchStart
+
+      switch
+        when name
+          tokens.push VariableExpandNode.wrap new StringNode name
+
+        when lBrace
+          tokens.push @parseString str, re  # re object is stateful
+
+        when rBrace
+          return VariableExpandNode.wrap tokens.flush()
 
       lastEnd = re.lastIndex - escaped?  # to grab an escaped char later on
 
-    if s = str.substring lastEnd
-      tokens.push new StringNode s
+    if isExpansion  # should have exited upon reaching the closing rBrace
+      throw new CompileError "Unterminated variable expansion
+                              '${#{str.substring start}'"
 
-    if tokens.length is 1
-      # This allows returning a value of any type (without coercing it
-      # to a string) in case if the whole string consists of the sole
-      # expansion: '${var}'
-      tokens[0]
-    else
-      StringJoinNode.wrap new ArrayNode null, sequence: tokens
+    tokens.pushString str.substring lastEnd
+    tokens.flush()
 
 
 class AssemblePass extends NodeVisitor
