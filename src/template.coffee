@@ -66,6 +66,14 @@ class VariableExpandNode extends WrapperNode
   @wrappedFieldName = 'name'
 
 
+class PropertyGetNode extends WrapperNode
+  @defineChildrenFields [
+    {target: 'node'}
+    {name: 'node'}
+  ]
+  @wrappedFieldName = 'target'
+
+
 class StringJoinNode extends WrapperNode
   @defineChildrenFields {array: 'node'}
   @wrappedFieldName = 'array'
@@ -112,8 +120,17 @@ class NodeToObject extends NodeVisitor
   visitStringNode: ({object: str}) ->
     str.replace /[$.}]/g, (char) -> "$#{char}"
 
-  visitVariableExpandNode: ({name}) ->
-    "${#{@visit name}}"
+  visitVariableExpandNode: ({name}, prop) ->
+    ret = @visit name
+    unless prop?
+      ret = "${#{ret}}"
+    ret
+
+  visitPropertyGetNode: ({target, name}, prop) ->
+    ret = "#{@visit target, yes}.#{@visit name}"
+    unless prop?
+      ret = "${#{ret}}"
+    ret
 
   visitStringJoinNode: ({array}) ->
     @visit(array).join ''
@@ -195,7 +212,10 @@ class ParsePass extends NodeTransformer
 
   parseString: (str, re) ->
     unless isExpansion = re?
-      re = /\$(?:([$}])|(\w+)|(\{))|(\})/g  # shared across recursive calls
+      # The outermost call that produced the resulting string (whereas inner
+      # calls are used to compute names of variables to expand).
+      # Create a RegExp instance, which is shared across all recursive calls.
+      re = /\$(?:([$.}])|(\w+)|(\{))|(\.)|(\})/g
 
     tokens = []
     tokens.flush = ->
@@ -226,11 +246,12 @@ class ParsePass extends NodeTransformer
         1: escaped
         2: name
         3: lBrace
-        4: rBrace
+        4: prop
+        5: rBrace
       } = match
 
       unless isExpansion
-        continue if rBrace  # ordinal chars
+        continue if prop or rBrace  # ordinal chars
 
       tokens.pushString str.substring lastEnd, matchStart
 
@@ -241,8 +262,16 @@ class ParsePass extends NodeTransformer
         when lBrace
           tokens.push @parseString str, re  # re object is stateful
 
-        when rBrace
-          return VariableExpandNode.wrap tokens.flush()
+        when prop or rBrace
+          nameNode = tokens.flush()
+          retNode =
+            unless retNode?
+              VariableExpandNode.wrap nameNode
+            else
+              PropertyGetNode.wrap retNode, name: nameNode
+
+          if rBrace
+            return retNode
 
       lastEnd = re.lastIndex - escaped?  # to grab an escaped char later on
 
@@ -297,6 +326,16 @@ class AssemblePass extends NodeVisitor
       property get: -> @[get.apply this]
     else  # probably a hot path
       property get: -> @[value]
+
+  visitPropertyGetNode: ({target, name}) ->
+    targetDescriptor = @fieldVisit.node target
+    nameDescriptor = @fieldVisit.node name
+
+    property get: ->
+      targetExpansion = targetDescriptor.apply this
+      nameExpansion = nameDescriptor.apply this
+
+      targetExpansion[nameExpansion]
 
   visitStringJoinNode: ({array}) ->
     tokenArrayDescriptor = @fieldVisit.node array
@@ -412,6 +451,7 @@ module.exports = {
   ScopeNode
   AssignNode
   VariableExpandNode
+  PropertyGetNode
   StringJoinNode
 
   nodeFromObject

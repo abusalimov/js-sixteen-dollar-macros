@@ -52,6 +52,51 @@ hey: Hi there!
 </tr></tbody>
 </table>
 
+The name of a variable to expand can be **computed dynamically**, that is other
+variables may be referenced inside the name of the variable being expanded:
+
+<table>
+<thead><tr><th>Input</th><th>Result</th></tr></thead>
+<tbody><tr>
+<td valign="top"><pre lang="yaml">
+$%:
+  foo: bar
+  bar: 42
+
+answer: ${$foo}
+</pre></td>
+<td valign="top"><pre lang="yaml">
+answer: 42
+</pre></td>
+</tr></tbody>
+</table>
+
+Variables can actually hold arbitrary objects of any types, not only strings or
+other primitive types. Another nice feature is that you can access properties
+within a variable reference using a dot after the variable name.
+
+<table>
+<thead><tr><th>Input</th><th>Result</th></tr></thead>
+<tbody><tr>
+<td valign="top"><pre lang="yaml">
+$%:
+  translations:
+    en:
+      greetings: [Hi, Hello]
+    ru:
+      greetings: [Привет, Салют]
+  strings: ${translations.$lang}
+
+$%lang: en
+
+greet: ${strings.greetings.1}!
+</pre></td>
+<td valign="top"><pre lang="yaml">
+greet: Hello!
+</pre></td>
+</tr></tbody>
+</table>
+
 Installation and usage
 ----------------------
 Install the
