@@ -176,22 +176,47 @@ class ParsePass extends NodeTransformer
 
 class AssemblePass extends NodeVisitor
 
+  class PropertyDescriptor
+    @:: = Object.create null
+    enumerable: yes
+
+  class AccessorDescriptor
+    constructor: (@get) ->
+    apply: (obj, args) ->
+      @get.apply obj, args
+    call: (obj, args...) ->
+      @apply obj, args
+
+  class DataDescriptor
+    constructor: (@value) ->
+    apply: -> @value
+    call: -> @value
+
+  property = (options) ->
+    switch
+      when options.get?
+        new AccessorDescriptor options.get
+      when 'value' of options
+        new DataDescriptor options.value
+      else
+        throw new TypeError "Must provide 'value' or 'get' key"
+
   visitFunctionNode: ({object: func}) ->
-    -> func
+    property value: func
 
   visitPrimitiveNode: ({object: value}) ->
-    -> value
+    property value: value
 
   visitStringNode: ({object: str}) ->
-    -> str
+    property value: str
 
   visitAssignNode: ({target, assign}) ->
-    targetFunc = @fieldVisit.node target
-    assignFunc = @fieldVisit.node assign
+    targetDescriptor = @fieldVisit.node target
+    assignDescriptor = @fieldVisit.node assign
 
-    ->
-      targetExpansion = targetFunc.apply this
-      assignExpansion = assignFunc.apply this
+    property get: ->
+      targetExpansion = targetDescriptor.apply this
+      assignExpansion = assignDescriptor.apply this
 
       for value in _.flattenDeep [assignExpansion]
         _.extend targetExpansion, checkIt isPlainObject: value, 'applied value'
@@ -200,26 +225,36 @@ class AssemblePass extends NodeVisitor
 
 
   visitArrayNode: ({sequence}) ->
-    itemFuncList = @fieldVisit.sequence sequence
+    itemDescriptorList = @fieldVisit.sequence sequence
 
-    ->
-      for itemFunc in itemFuncList
-        itemFunc.apply this
+    property get: ->
+      for itemDescriptor in itemDescriptorList
+        itemDescriptor.apply this
 
   visitObjectNode: ({mapping}) ->
-    keyValueFuncEntryMap = @fieldVisit.mapping mapping
+    keyValueDescriptorEntryMap = @fieldVisit.mapping mapping
 
-    ->
+    property get: ->
       result = {}
 
-      for key, entry of keyValueFuncEntryMap
-        {key: keyFunc, value: valueFunc} = entry
-        result[keyFunc.apply this] = valueFunc.apply this
+      for key, entry of keyValueDescriptorEntryMap
+        {key: keyDescriptor, value: valueDescriptor} = entry
+        result[keyDescriptor.apply this] = valueDescriptor.apply this
 
       result
 
   visitKeyValueNode: ({key, value}) ->
     @fieldVisit.mapping {key, value}
+
+  visitScopeNode: ({node, variables}) ->
+    nodeDescriptor = @fieldVisit.node node
+    variableDescriptorMap = @fieldVisit.mapping variables
+
+    property get: ->
+      # Leverage the power of native JS prototype inheritance to make inner
+      # scope variables shadow the outer ones.
+      scope = Object.create this, variableDescriptorMap
+      nodeDescriptor.apply scope
 
 
 class Compiler
