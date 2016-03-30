@@ -271,7 +271,13 @@ class AssemblePass extends NodeVisitor
       assignExpansion = assignDescriptor.apply this
 
       for value in _.flattenDeep [assignExpansion]
-        _.extend targetExpansion, checkIt isPlainObject: value, 'applied value'
+        checkIt isPlainObject: value, 'applied value'
+        _.extendWith targetExpansion, value, (objValue, srcValue, key) ->
+          unless objValue is undefined
+            throw new ExpandError "Destination object already has '#{key}'
+                                   property: '#{objValue}'
+                                   (attempt to set to '#{srcValue}')"
+          srcValue
 
       targetExpansion
 
@@ -288,10 +294,22 @@ class AssemblePass extends NodeVisitor
 
     property get: ->
       result = {}
+      origKeys = {}
 
       for key, entry of keyValueDescriptorEntryMap
         {key: keyDescriptor, value: valueDescriptor} = entry
-        result[keyDescriptor.apply this] = valueDescriptor.apply this
+
+        keyExpansion = keyDescriptor.apply this
+
+        checkIt isString: keyExpansion, 'object key'
+        if (origKey = origKeys[keyExpansion])?
+          throw new ExpandError "Duplicate object key '#{keyExpansion}'
+                                 as a result of expanding
+                                 both '#{origKey}' and '#{key}'"
+        else
+          origKeys[keyExpansion] = key
+
+        result[keyExpansion] = valueDescriptor.apply this
 
       result
 
@@ -333,6 +351,7 @@ expand = (template, variables) ->
 
 class TemplateError extends NodeVisitorError
 class CompileError extends TemplateError
+class ExpandError extends TemplateError
 
 
 module.exports = {
@@ -366,4 +385,5 @@ module.exports = {
 
   TemplateError
   CompileError
+  ExpandError
 }

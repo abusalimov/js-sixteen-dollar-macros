@@ -1,5 +1,5 @@
 describe 'template', ->
-  {expand, CompileError} = require '../lib/template'
+  {expand, CompileError, ExpandError} = require '../lib/template'
 
   it 'should leave objects with no macros or variables as is', ->
     expect(expand 'Hello world!')
@@ -111,6 +111,12 @@ describe 'template', ->
       expect(expand [greeting: 'Hello ${world}!'], world: 'everyone')
         .toEqual [greeting: 'Hello everyone!']
 
+    it 'should fail to produce an object with conflicting keys', ->
+      expect(-> expand {
+          foo: 'bar'
+          '$foo': 'baz'
+        }, foo: 'foo').toThrowError ExpandError, /duplicate/i
+
   describe 'extending objects with $!', ->
     it 'should assign properties from source object', ->
       expect(expand {
@@ -118,3 +124,10 @@ describe 'template', ->
           '$!':
             bar: 'baz'
         }).toEqual foo: 'bar', bar: 'baz'
+
+    it 'should fail to copy conflicting properties', ->
+      expect(-> expand {
+          foo: 'bar'
+          '$!':
+            foo: 'baz'
+        }).toThrowError ExpandError, /already has/i
