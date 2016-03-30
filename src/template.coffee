@@ -209,7 +209,13 @@ class ParsePass extends NodeTransformer
     if s = str.substring lastEnd
       tokens.push new StringNode s
 
-    StringJoinNode.wrap new ArrayNode null, sequence: tokens
+    if tokens.length is 1
+      # This allows returning a value of any type (without coercing it
+      # to a string) in case if the whole string consists of the sole
+      # expansion: '${var}'
+      tokens[0]
+    else
+      StringJoinNode.wrap new ArrayNode null, sequence: tokens
 
 
 class AssemblePass extends NodeVisitor

@@ -117,6 +117,16 @@ describe 'template', ->
           '$foo': 'baz'
         }, foo: 'foo').toThrowError ExpandError, /duplicate/i
 
+    it 'should return a sole expansion within a string untouched', ->
+      expect(expand {
+          '$%':
+            foo: '$bar'
+            bar: '${baz}'
+            baz:
+              compound: ['object']
+          '$': '$foo'
+        }).toEqual compound: ['object']
+
   describe 'extending objects with $!', ->
     it 'should assign properties from source object', ->
       expect(expand {
@@ -124,6 +134,12 @@ describe 'template', ->
           '$!':
             bar: 'baz'
         }).toEqual foo: 'bar', bar: 'baz'
+
+    it 'should assign properties from source object using expansion', ->
+      expect(expand {
+          foo: 'bar'
+          '$!': '$obj'
+        }, obj: {bar: 'baz'}).toEqual foo: 'bar', bar: 'baz'
 
     it 'should fail to copy conflicting properties', ->
       expect(-> expand {
