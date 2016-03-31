@@ -51,6 +51,8 @@ describe 'template', ->
           '$': 'Hello'
         }
 
+      expect(parseCompileDump '$:hello': ['args']).toEqual '$:hello': ['args']
+
     it "should forbid mixing '$' key with regular keys", ->
       expect(-> parseCompileDump {
           '$': 'Hello'
@@ -177,3 +179,21 @@ describe 'template', ->
           '$!':
             foo: 'baz'
         }).toThrowError ExpandError, /already has/i
+
+  describe 'calling functions with $:func: [...]', ->
+    func = null
+
+    beforeEach ->
+      func = jasmine.createSpy('func').and.returnValue 42
+
+    it 'should expand the reference and call the result passing args', ->
+      expect(expand '$:func': [1, 2, 3], {func}).toEqual 42
+      expect(func).toHaveBeenCalled()
+      expect(func.calls.count()).toEqual 1
+
+
+    it 'should support referring a function through properties', ->
+      expect(expand '$:lib.func': [1, 2, 3], {lib: {func}}).toEqual 42
+      expect(func).toHaveBeenCalled()
+      expect(func.calls.count()).toEqual 1
+

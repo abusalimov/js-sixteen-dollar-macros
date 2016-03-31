@@ -61,15 +61,26 @@ class AssignNode extends WrapperNode
   @wrappedFieldName = 'target'
 
 
-class VariableExpandNode extends WrapperNode
+class ExpandNode extends WrapperNode
+
+
+class VariableExpandNode extends ExpandNode
   @defineChildrenFields {name: 'node'}
   @wrappedFieldName = 'name'
 
 
-class PropertyGetNode extends WrapperNode
+class PropertyGetNode extends ExpandNode
   @defineChildrenFields [
     {target: 'node'}
     {name: 'node'}
+  ]
+  @wrappedFieldName = 'target'
+
+
+class CallNode extends ExpandNode
+  @defineChildrenFields [
+    {target: 'node'}
+    {args: 'node'}
   ]
   @wrappedFieldName = 'target'
 
@@ -132,6 +143,11 @@ class NodeToObject extends NodeVisitor
       ret = "${#{ret}}"
     ret
 
+  visitCallNode: ({target, args}) ->
+    funcName = @visit target, yes
+
+    {"$:#{funcName}": @visit args}
+
   visitStringJoinNode: ({array}) ->
     @visit(array).join ''
 
@@ -151,6 +167,12 @@ class ParsePass extends NodeTransformer
     dollarNode = null
     assignNode = null
 
+    parseCallName = (name) =>
+      ret = @parseString "${#{name}}"
+      unless ret instanceof ExpandNode
+        throw new CompileError "Invalid name to call: '${name}'"
+      ret
+
     node = @genericVisit node,
       defineVariables: (scopeMapping) =>
         for name, {value} of scopeMapping
@@ -160,15 +182,19 @@ class ParsePass extends NodeTransformer
           variables[name] = @visit value
         return
 
-      defineExpansion: (value) =>
+      defineExpansion: (value, funcName) =>
         if dollarNode?
           throw new CompileError "Multiple '$:' expansions in a single object"
         dollarNode = @visit value
+        if funcName
+          dollarNode = CallNode.wrap parseCallName(funcName), args: dollarNode
 
-      defineAssignment: (value) =>
+      defineAssignment: (value, funcName) =>
         if assignNode?
           throw new CompileError "Multiple '$!:' directives in a single object"
         assignNode = @visit value
+        if funcName
+          throw new CompileError "Not implemented yet"
 
     if dollarNode?
       unless _.isEmpty node.mapping
@@ -185,7 +211,7 @@ class ParsePass extends NodeTransformer
 
   visitKeyValueNode: (node, actions) ->
     {key, value} = node
-    [all, dollar, directive, name] = /^(\$([%!])?)?(.*)$/.exec key.object
+    [all, dollar, directive, name] = /^(\$([%!:])?)?(.+)??$/.exec key.object
 
     switch
       when directive is '%'  # $%...: ...
@@ -194,18 +220,20 @@ class ParsePass extends NodeTransformer
             {"#{name}": node}
           else  # $%: ...
             Node.checkType(value, ObjectNode).mapping
-        return
 
-      when directive is '!' and not name  # $!: ...
-        actions.defineAssignment value
-        return
+      when directive is '!'  # $!...: ...
+        actions.defineAssignment value, name
+
+      when directive is ':'  # $:...: ...
+        actions.defineExpansion value, name
 
       when dollar and not name  # $: ...
         actions.defineExpansion value
-        return
 
       else
-        @genericVisit node
+        return @genericVisit node
+
+    return  # skip special directive nodes
 
   visitStringNode: ({object: str}) ->
     @parseString str
@@ -337,6 +365,19 @@ class AssemblePass extends NodeVisitor
 
       targetExpansion[nameExpansion]
 
+  visitCallNode: ({target, args}) ->
+    unless args instanceof ArrayNode
+      args = new ArrayNode args.object, sequence: [args]
+
+    targetDescriptor = @fieldVisit.node target
+    argsDescriptor = @fieldVisit.node args
+
+    property get: ->
+      targetExpansion = targetDescriptor.apply this
+      argsExpansion = argsDescriptor.apply this
+
+      targetExpansion.apply this, argsExpansion
+
   visitStringJoinNode: ({array}) ->
     tokenArrayDescriptor = @fieldVisit.node array
     property get: ->
@@ -406,6 +447,9 @@ class AssemblePass extends NodeVisitor
       # scope variables shadow the outer ones.
       scope = Object.create this, variableDescriptorMap
       nodeDescriptor.apply scope
+
+  genericVisit: (node) ->
+    throw new CompileError "Unknown node type '#{node.constructor.name}'"
 
 
 class Compiler
