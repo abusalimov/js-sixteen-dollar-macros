@@ -27,6 +27,22 @@ throwTypeError = (value, typeName, prefix, msg) ->
                        #{inspect value, customInspect: off}"
 
 
+isPrototype = (value) ->
+  Ctor = value?.constructor
+  proto = if typeof Ctor is 'function' then Ctor.prototype else Object::
+
+  value is proto
+
+
+allProperties = (object, stopPredicate = isPrototype) ->
+  properties = {}
+  while object? and not stopPredicate object
+    for name in Object.getOwnPropertyNames object
+      properties[name] ?= Object.getOwnPropertyDescriptor object, name
+    object = Object.getPrototypeOf object
+  properties
+
+
 # Workaround for jashkenas/coffeescript#2359-related oddities
 # ("default constructor for subclasses of native objects")
 class BaseError extends Error
@@ -42,6 +58,9 @@ module.exports = {
   checkIt
   checkType
   throwTypeError
+
+  isPrototype
+  allProperties
 
   BaseError
 }

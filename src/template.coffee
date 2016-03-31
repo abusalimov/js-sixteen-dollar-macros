@@ -1,5 +1,6 @@
 require('source-map-support').install()
 
+path = require 'path'
 {
   isPlainObject
   isArray
@@ -17,7 +18,8 @@ require('source-map-support').install()
   NodeVisitorError
 } = require './node'
 
-{checkIt} = require './util'
+loader = require './load'
+{checkIt, allProperties} = require './util'
 
 
 class LeafNode extends Node
@@ -452,26 +454,70 @@ class AssemblePass extends NodeVisitor
     throw new CompileError "Unknown node type '#{node.constructor.name}'"
 
 
-class Compiler
+class CompilerBase
+
+  class @Scope
+    @:: = Object.create null
+    @::constructor = this
+    constructor: (@__compiler) ->
+
   constructor: ->
+    @rootScope = new @constructor.Scope this
+
     @parsePass = new ParsePass
     @assemblePass = new AssemblePass
+
+  createScope: (variables, parentScope = @rootScope) ->
+    Object.create parentScope, allProperties variables
 
   compile: (template) ->
     node = nodeFromObject template
     preprocessedNode = @parsePass.visit node
-    nodeDescriptor = @assemblePass.visit preprocessedNode
-    (scope = Object.create null) ->
-      nodeDescriptor.apply scope
+    @assemblePass.visit preprocessedNode
+
+  eval: (template, variables, parentScope = @rootScope) ->
+    nodeDescriptor = @compile template
+    nodeDescriptor.apply @createScope variables, parentScope
 
 
-compile = (template) ->
-  new Compiler().compile template
+class Compiler extends CompilerBase
+
+  class @Scope extends @Scope
+    __dirname: '.'
+
+    include: (filename) ->
+      filename = path.resolve @__dirname, filename
+      @__compiler.evalFile filename, this
+
+  constructor: (@options = {}) ->
+    super
+    @rootScope.__dirname = @options.dirname if @options.dirname?
+    @fileCache = {}
+
+  createFileScope: (filename, variables, parentScope = @rootScope) ->
+    __filename = path.resolve filename
+    __dirname = path.dirname __filename
+
+    @createScope _.defaults({__filename, __dirname}, variables), parentScope
+
+  loadFile: (filename) ->
+    filename = path.resolve filename
+    @fileCache[filename] ?= loader.loadFile filename, @options
+
+  compileFile: (filename) ->
+    template = @loadFile filename
+    @compile template
+
+  evalFile: (filename, variables, parentScope = @rootScope) ->
+    nodeDescriptor = @compileFile filename
+    nodeDescriptor.apply @createFileScope filename, variables, parentScope
 
 
-expand = (template, variables) ->
-  func = compile template
-  func variables
+expand = (template, variables, options) ->
+  new Compiler(options).eval template, variables
+
+expandFile = (filename, variables, options) ->
+  new Compiler(options).evalFile filename, variables
 
 
 class TemplateError extends NodeVisitorError
@@ -505,9 +551,9 @@ module.exports = {
   AssemblePass
 
   Compiler
-  compile
 
   expand
+  expandFile
 
   TemplateError
   CompileError

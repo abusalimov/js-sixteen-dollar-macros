@@ -1,0 +1,6 @@
+$%:
+  greeting: ${i18n.greet} World!
+  i18n:
+    $:include: 'i18n.yaml'
+
+hey: $greeting

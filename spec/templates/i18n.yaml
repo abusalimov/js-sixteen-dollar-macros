@@ -1,0 +1,9 @@
+$%:
+  translations:
+    en:
+      greetings: [Hi, Hello]
+    ru:
+      greetings: [Привет, Салют]
+  strings: ${translations.$lang}
+
+greet: ${strings.greetings.1}

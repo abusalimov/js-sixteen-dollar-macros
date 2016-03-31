@@ -197,3 +197,28 @@ describe 'template', ->
       expect(func).toHaveBeenCalled()
       expect(func.calls.count()).toEqual 1
 
+  describe 'loading templates from file', ->
+    path = require 'path'
+    templatesDir = path.resolve __dirname, 'templates'
+
+    expandFile = do ({expandFile} = require '../lib/template') ->
+      (filename, variables, options) ->
+        filename = path.resolve templatesDir, filename
+        expandFile filename, variables, options
+
+    it 'can load and expand a simple template', ->
+      expect(expandFile 'hello.yaml').toEqual hey: 'Hello World!'
+
+    it 'can include a file from within a template', ->
+      expect(expand '$:include': 'hello.yaml', {}, dirname: templatesDir)
+        .toEqual hey: 'Hello World!'
+
+    it 'should "see" outer scope variables inside an included file', ->
+      expect(expandFile 'hello-i18n.yaml', lang: 'en')
+        .toEqual hey: 'Hello World!'
+      expect(expandFile 'hello-i18n.yaml', lang: 'ru')
+        .toEqual hey: 'Салют World!'
+
+
+
+
