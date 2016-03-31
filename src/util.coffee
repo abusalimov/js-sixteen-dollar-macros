@@ -48,6 +48,7 @@ allProperties = (object, stopPredicate = isPrototype) ->
 class BaseError extends Error
   constructor: (@message) ->
     super @message
+    Error.captureStackTrace(this, @constructor)
     @name = @constructor.name
 
 
