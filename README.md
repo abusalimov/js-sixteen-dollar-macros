@@ -44,7 +44,7 @@ $%:
   greeting: $hello there!
   hello: Hi
 
-hey: $greeting!
+hey: $greeting
 </pre></td>
 <td valign="top"><pre lang="yaml">
 hey: Hi there!
