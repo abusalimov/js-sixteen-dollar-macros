@@ -43,9 +43,12 @@ class KeyValueNode extends Node
 class WrapperNode extends Node
   @wrappedFieldName = 'node'
 
+  constructor: (children) ->
+    super children[@constructor.wrappedFieldName].object, children
+
   @wrap: (node, children) ->
     wrappedChild = {"#{@wrappedFieldName}": node}
-    new this node.object, _.extend wrappedChild, children
+    new this _.extend wrappedChild, children
 
 
 class ScopeNode extends WrapperNode
@@ -169,10 +172,11 @@ class ParsePass extends NodeTransformer
     dollarNode = null
     assignNode = null
 
-    parseCallName = (name) =>
-      ret = @parseString "${#{name}}"
-      unless ret instanceof ExpandNode
+    parseCallTo = (name) =>
+      ret = @parseString "${#{name}()}"
+      unless ret instanceof CallNode
         throw new CompileError "Invalid name to call: '${name}'"
+      ret.args = [dollarNode]
       ret
 
     node = @genericVisit node,
@@ -189,7 +193,7 @@ class ParsePass extends NodeTransformer
           throw new CompileError "Multiple '$:' expansions in a single object"
         dollarNode = @visit value
         if funcName
-          dollarNode = CallNode.wrap parseCallName(funcName), args: dollarNode
+          dollarNode = parseCallTo funcName, dollarNode
 
       defineAssignment: (value, funcName) =>
         if assignNode?
@@ -204,10 +208,10 @@ class ParsePass extends NodeTransformer
       node = dollarNode
 
     if assignNode?
-      node = AssignNode.wrap node, {assign: assignNode}
+      node = new AssignNode {target: node, assign: assignNode}
 
     unless _.isEmpty variables
-      node = ScopeNode.wrap node, {variables}
+      node = new ScopeNode {node, variables}
 
     node
 
