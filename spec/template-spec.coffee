@@ -37,6 +37,13 @@ describe 'template', ->
       expect(parseCompileDump '${$hello}').toEqual '${${hello}}'
       expect(parseCompileDump '${hello.length}').toEqual '${hello.length}'
       expect(parseCompileDump '${hello.$prop}').toEqual '${hello.${prop}}'
+      expect(parseCompileDump '${@}').toEqual '${@}'
+      expect(parseCompileDump '${func(arg)}').toEqual '${func(arg)}'
+      expect(parseCompileDump '${(func)(arg)}').toEqual '${(func)(arg)}'
+      expect(parseCompileDump '${hello .meth (arg) : dfl }')
+          .toEqual '${hello.meth(arg): dfl }'
+      expect(parseCompileDump '\\(noesc\\),but ${hello\\.meth\\((arg).\\:dfl}')
+        .toEqual '\\(noesc\\),but ${hello\\.meth\\((arg).\\:dfl}'
 
     it 'should parse/dump objects with special directives properly', ->
       expect(parseCompileDump {'$': 'Hello'}).toEqual 'Hello'
@@ -51,7 +58,7 @@ describe 'template', ->
           '$': 'Hello'
         }
 
-      expect(parseCompileDump '$:hello': ['args']).toEqual '$:hello': ['args']
+      expect(parseCompileDump '$:hello': ['args']).toEqual '${hello(args)}'
 
     it "should forbid mixing '$' key with regular keys", ->
       expect(-> parseCompileDump {
@@ -132,6 +139,11 @@ describe 'template', ->
               compound: ['object']
           '$': '$foo'
         }).toEqual compound: ['object']
+      expect(expand '$foo', foo: {toString: -> 'Whee'}).not.toEqual 'Whee'
+
+    it 'should expand ${} to an empty string', ->
+      expect(expand '${}').toEqual ''
+      expect(expand '${}$foo', foo: {toString: -> 'Whee'}).toEqual 'Whee'
 
     it 'should expand variables with computed names properly', ->
       expect(expand {
@@ -143,11 +155,16 @@ describe 'template', ->
         }).toEqual 0xC0FFEE
 
     it 'should unescape special chars properly', ->
-      expect(expand '$$$$$$$$$$$$$$$${16} macros is ${$}$.$$}some',
-        '}.$': 'Aww!').toEqual '$$$$$$$${16} macros is Aww!some'
+      expect(expand '$$$$$$$$$$$$$$$${16} macros is ${$$.$$}some',
+        $: {$: 'Aww!'}).toEqual '$$$$$$$${16} macros is Aww!some'
+
+      expect(expand '\\(noesc\\),but ${hello\\.meth\\((arg).\\:dfl}',
+          'hello.meth(': (arg) -> ':dfl': [arg])
+        .toEqual '\\(noesc\\),but arg'
 
     it 'should raise an error in case of unterminated expansion braces', ->
-      expect(-> expand '${${foo}f').toThrowError CompileError, /unterminated/i
+      expect(-> expand '${${foo}f')
+        .toThrowError CompileError, /expected closing/i
 
     it 'should follow properties within variable expansion', ->
       expect(expand {
@@ -158,6 +175,45 @@ describe 'template', ->
               compound: ['object']
           '$': '${foo.compound.0}'
         }).toEqual 'object'
+
+    it 'should call a function passing a single argument, if any', ->
+      expect(expand '${foo()}${foo(gh)}${foo(${})}', {
+          foo: (arg) -> if arg? then "[#{arg}]" else @bar
+          bar: 'Arrrr'
+        }).toEqual 'Arrrr[gh][]'
+
+    it 'should support balanced parens/braces inside the argument', ->
+      expect(expand '${foo(())}', foo: (arg) -> "[#{arg}]")
+        .toEqual '[()]'
+      expect(expand '${foo(({(aaa)}))}', foo: (arg) -> "[#{arg}]")
+        .toEqual '[({(aaa)})]'
+
+      expect(expand '${foo( 1( 2 {3( aaa ) 3}2 ) 1 )}',
+          foo: (arg) -> "[#{arg}]")
+        .toEqual '[ 1( 2 {3( aaa ) 3}2 ) 1 ]'
+
+    it 'should support backslash escaping inside expression or argument', ->
+      expect(expand '${foo\\:bar\\.baz}', 'foo:bar.baz': "ret!")
+        .toEqual 'ret!'
+
+      expect(expand '${foo(\\\\aaa\\)\\))}', foo: (arg) -> "[#{arg}]")
+        .toEqual '[\\aaa))]'
+
+    it 'should return default value if expression evaluates to undefined', ->
+      expect(expand '${foo:bar}', foo: 'baz').toEqual 'baz'
+      expect(expand '${foo:bar}').toEqual 'bar'
+
+      expect(expand '${foo:ba${r:z}}', foo: 'foof').toEqual 'foof'
+      expect(expand '${foo:ba${r:z}}', r: 'roof').toEqual 'baroof'
+      expect(expand '${foo:ba${r:z}}').toEqual 'baz'
+
+    it 'should not propagate "this" when calling parenthesized expression', ->
+      expect(expand '${foo():xxx}', foo: (-> @bar), bar: 'baz').toEqual 'baz'
+      expect(expand '${(foo)():xxx}', foo: (-> @bar), bar: 'baz').toEqual 'xxx'
+
+    it 'should expand ${@} as "this"', ->
+      expect(expand '${arg(${@})}', foo: 'bar', arg: (obj) -> obj.foo)
+        .toEqual 'bar'
 
   describe 'extending objects with $!', ->
     it 'should assign properties from source object', ->
@@ -210,7 +266,7 @@ describe 'template', ->
       expect(expandFile 'hello.yaml').toEqual hey: 'Hello World!'
 
     it 'can include a file from within a template', ->
-      expect(expand '$:include': 'hello.yaml', {}, dirname: templatesDir)
+      expect(expand '${include(hello.yaml)}', {}, dirname: templatesDir)
         .toEqual hey: 'Hello World!'
 
     it 'should "see" outer scope variables inside an included file', ->

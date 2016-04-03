@@ -19,7 +19,7 @@ path = require 'path'
 } = require './node'
 
 loader = require './load'
-{checkIt, allProperties} = require './util'
+{checkIt, allProperties, truncateLeft} = require './util'
 
 
 class LeafNode extends Node
@@ -66,15 +66,10 @@ class AssignNode extends WrapperNode
   @wrappedFieldName = 'target'
 
 
-class ExpandNode extends WrapperNode
+class ThisNode extends LeafNode
 
 
-class VariableExpandNode extends ExpandNode
-  @defineChildrenFields {name: 'node'}
-  @wrappedFieldName = 'name'
-
-
-class PropertyGetNode extends ExpandNode
+class PropertyNode extends WrapperNode
   @defineChildrenFields [
     {target: 'node'}
     {name: 'node'}
@@ -82,10 +77,29 @@ class PropertyGetNode extends ExpandNode
   @wrappedFieldName = 'target'
 
 
-class CallNode extends ExpandNode
+class CallNode extends WrapperNode
+  @wrappedFieldName = 'target'
+
+
+class FunctionCallNode extends CallNode
   @defineChildrenFields [
     {target: 'node'}
-    {args: 'node'}
+    {args: 'sequence'}
+  ]
+
+
+class MethodCallNode extends CallNode
+  @defineChildrenFields [
+    {target: 'node'}
+    {name: 'node'}
+    {args: 'sequence'}
+  ]
+
+
+class DefaultValueNode extends WrapperNode
+  @defineChildrenFields [
+    {target: 'node'}
+    {fallback: 'node'}
   ]
   @wrappedFieldName = 'target'
 
@@ -117,7 +131,12 @@ nodeToObject = (node) ->
   new NodeToObject().visit node
 
 
-class NodeToObject extends NodeVisitor
+class NodeTranslator extends NodeVisitor
+  genericVisit: (node) ->
+    throw new CompileError "Unknown node type '#{node.constructor.name}'"
+
+
+class NodeToObject extends NodeTranslator
 
   visitScopeNode: ({node, variables}) ->
     unless isPlainObject object = @visit node
@@ -133,25 +152,41 @@ class NodeToObject extends NodeVisitor
 
   visitFunctionNode: ({object}) -> object
   visitPrimitiveNode: ({object}) -> object
-  visitStringNode: ({object: str}) ->
-    str.replace /[$.}]/g, (char) -> "$#{char}"
+  visitStringNode: ({object: str}, inExpr) ->
+    str = str.replace '$', (char) -> "$#{char}"
+    if inExpr?
+      str = str.replace /[\\{}().:]/g, (char) -> "\\#{char}"
+    str
 
-  visitVariableExpandNode: ({name}, prop) ->
-    ret = @visit name
-    unless prop?
-      ret = "${#{ret}}"
-    ret
+  wrap = (inExpr, trailer, ret) ->
+    unless trailer?
+      "${#{ret}}"
+    else
+      "#{ret}#{trailer or ''}"
 
-  visitPropertyGetNode: ({target, name}, prop) ->
-    ret = "#{@visit target, yes}.#{@visit name}"
-    unless prop?
-      ret = "${#{ret}}"
-    ret
+  visitThisNode: ({}, inExpr, trailer) ->
+    unless trailer? then '${@}' else ''
 
-  visitCallNode: ({target, args}) ->
-    funcName = @visit target, yes
+  visitPropertyNode: ({target, name}, inExpr, trailer) ->
+    wrap inExpr, trailer,
+      "#{@visit target, yes, '.'}#{@visit name, yes}"
 
-    {"$:#{funcName}": @visit args}
+  argStr: (args, inExpr) ->
+    if args.length > 1
+      throw new Error "Not implemented yet"
+    if arg = args[0] then @visit arg, inExpr else '${}'
+
+  visitMethodCallNode: ({target, name, args}, inExpr, trailer) ->
+    wrap inExpr, trailer,
+      "#{@visit target, yes, '.'}#{@visit name, yes}(#{@argStr args, yes})"
+
+  visitFunctionCallNode: ({target, args}, inExpr, trailer) ->
+    wrap inExpr, trailer,
+      "(#{@visit target, yes, ''})(#{@argStr args, yes})"
+
+  visitDefaultValueNode: ({target, fallback}, inExpr, trailer) ->
+    wrap inExpr, trailer,
+      "#{@visit target, yes, ':'}#{@visit fallback, yes}"
 
   visitStringJoinNode: ({array}) ->
     @visit(array).join ''
@@ -172,39 +207,40 @@ class ParsePass extends NodeTransformer
     dollarNode = null
     assignNode = null
 
-    parseCallTo = (name) =>
+    parseCallTo = (name, arg) =>
       ret = @parseString "${#{name}()}"
       unless ret instanceof CallNode
-        throw new CompileError "Invalid name to call: '${name}'"
-      ret.args = [dollarNode]
+        throw @error "Invalid name to call: '#{name}'
+                      (parsed as a #{ret.constructor.name} object)"
+      ret.args = if arg instanceof ArrayNode then arg.sequence else [arg]
       ret
 
     node = @genericVisit node,
       defineVariables: (scopeMapping) =>
         for name, {value} of scopeMapping
           if name of variables
-            throw new CompileError "Duplicate variable definition: '#{name}'"
+            throw @error "Duplicate variable definition: '#{name}'"
 
           variables[name] = @visit value
         return
 
       defineExpansion: (value, funcName) =>
         if dollarNode?
-          throw new CompileError "Multiple '$:' expansions in a single object"
+          throw @error "Multiple '$:' expansions in a single object"
         dollarNode = @visit value
         if funcName
           dollarNode = parseCallTo funcName, dollarNode
 
       defineAssignment: (value, funcName) =>
         if assignNode?
-          throw new CompileError "Multiple '$!:' directives in a single object"
+          throw @error "Multiple '$!:' directives in a single object"
         assignNode = @visit value
         if funcName
-          throw new CompileError "Not implemented yet"
+          throw @error "Not implemented yet"
 
     if dollarNode?
       unless _.isEmpty node.mapping
-        throw new CompileError "Mixed '$:' expansion and regular object keys"
+        throw @error "Mixed '$:' expansion and regular object keys"
       node = dollarNode
 
     if assignNode?
@@ -244,80 +280,191 @@ class ParsePass extends NodeTransformer
   visitStringNode: ({object: str}) ->
     @parseString str
 
-  parseString: (str, re) ->
-    unless isExpansion = re?
-      # The outermost call that produced the resulting string (whereas inner
-      # calls are used to compute names of variables to expand).
-      # Create a RegExp instance, which is shared across all recursive calls.
-      re = /\$(?:([$.}])|(\w+)|(\{))|(\.)|(\})/g
+  parseString: (str) ->
+    # A stateful RegExp instance, which is passed to @parseStringInternal,
+    # is shared across all recursive calls.
+    @parseStringInternal(str, ///
+        \$ (\$)  |  # 1: escaped
+        \$ (\w+) |  # 2: name
+        \$ (\{)  |  # 3: expand
 
-    tokens = []
-    tokens.flush = ->
+        (\\)? (?: \\ |  # 4: opEscape
+          ([{}().:]) )  # 5: op
+      ///g) ? new StringNode ''
+
+  matchingOp =
+    '(': ')'
+    '{': '}'
+
+  parseStringInternal: (str, re, {prefix, closing, inExpr} = {}) ->
+    # Parse an ${expansion} expression, or produce a joined string
+    start = re.lastIndex
+
+    prefix ?= ''
+    target = new ThisNode if inExpr
+
+    tokens = new TokenBuffer str, start
+    lastEnd = start
+    while match = re.exec str
+      {
+        index: matchStart
+        1: escaped
+        2: simpleName
+        3: expand
+        4: opEscape
+        5: op
+      } = match
+
+      unless closing? or inExpr
+        continue if op  # an ordinal char here
+
+      else if opEscape
+        escaped = op ? '\\'
+        op = null
+      else
+        opOpen  = if op in '{(' then op
+        opClose = if op in ')}' then op
+        opDelim = if op in '.:' then op
+
+      tokens.pushSubstring lastEnd, matchStart, trim: inExpr
+
+      switch
+        when simpleName
+          tokens.push new PropertyNode
+            target: new ThisNode
+            name: new StringNode simpleName
+
+        when expand  # is '}'
+          tok = @parseStringInternal str, re,
+            prefix: "#{prefix}${"
+            closing: '}'
+            inExpr: yes
+          tokens.push tok ? new StringNode ''
+
+        when op and not inExpr  # i.e. inside a call argument
+          unless opClose
+            tokens.pushString op
+          if opOpen
+            tok = @parseStringInternal str, re,
+              prefix: "#{prefix}#{op}"
+              closing: matchingOp[op]
+              inExpr: no
+            if tok?
+              tokens.pushFlat tok
+            tokens.pushString matchingOp[op]
+
+        when op and inExpr
+          name = tokens.flush(matchStart)
+          if name? and lastOp is '('
+            throw @error "Unexpected tokens: '(...)#{name.object}'"
+          if not name? and lastOp is '.'
+            throw @error "Expected a property name after period: '.#{op}'"
+          retTarget = target if name?
+
+          if opDelim and not retTarget?
+            throw @error "Expected a target expression preceding: '#{op}'"
+
+          retTarget = target =
+            if opOpen
+              if op is '{'
+                throw @error "Unexpected open '{' in expression"
+
+              content = @parseStringInternal str, re,
+                prefix: "#{prefix}#{name?.object}#{op}"
+                closing: matchingOp[op]
+                inExpr: not retTarget?  # i.e. not a call argument
+
+              unless retTarget?
+                unless content?
+                  errExpr = str.substring matchStart, re.lastIndex
+                  throw @error "Empty parens expression: '#{errExpr}'"
+                content
+              else
+                args = if content? then [content] else []
+                if name?
+                  new MethodCallNode {target, name, args}
+                else
+                  new FunctionCallNode {target, args}
+
+            else  # opDelim or opClose
+              if name? and not (name instanceof StringNode and
+                                name.object is '@')
+                new PropertyNode {target, name}
+              else
+                retTarget
+
+          if op is ':'
+            fallback = @parseStringInternal str, re,
+              prefix: "#{prefix}#{name?.object}#{op}"
+              closing: closing
+              inExpr: no
+            op = opClose = closing  # cheat to break and return
+
+            retTarget = target = new DefaultValueNode {target, fallback}
+
+      lastEnd = re.lastIndex - escaped? # to grab an escaped char later on
+
+      if opClose
+        break
+      lastOp = op if op
+
+    unless closing? or inExpr
+      tokens.pushSubstring lastEnd
+
+    else if op isnt closing
+      throw @error "Expected closing '#{closing}':
+                    '#{truncateLeft prefix, length: 16}\
+                     #{str.substring start, lastEnd}'"
+    return retTarget if inExpr
+
+    tokens.flush()
+
+  class TokenBuffer extends Array
+    constructor: (@str, @start) ->
+      super
+
+    flush: (newStart) ->
       ret =
         if @length is 1
           # This allows returning a value of any type (without coercing it
           # to a string) in case if the whole string consists of the sole
           # expansion: '${var}'
           this[0]
-        else
-          StringJoinNode.wrap new ArrayNode null, sequence: this[...]
+        else if @length > 1
+          s = @str.substring @start, newStart
+          new StringJoinNode array: new ArrayNode s, sequence: this[...]
+
+      if newStart?
+        @start = newStart
 
       @length = 0
       ret
 
-    tokens.pushString = (s) ->
-      if s
-        last = this[@length - 1]
-        if last instanceof StringNode
-          last.object += s
-        else
-          @push new StringNode s
+    pushFlat: (node) ->
+      if node instanceof StringJoinNode
+        for n in node.array.sequence
+          @pushFlat n
+        return
+      last = this[@length - 1]
+      if last instanceof StringNode and node instanceof StringNode
+        last.object += node.object
+      else
+        @push node
 
-    lastEnd = start = re.lastIndex
-    while match = re.exec str
-      {
-        index: matchStart
-        1: escaped
-        2: name
-        3: lBrace
-        4: prop
-        5: rBrace
-      } = match
+    pushString: (s, {trim, force} = {}) ->
+      if trim
+        s = s.trim()
+      if s or force
+        @pushFlat new StringNode s
 
-      unless isExpansion
-        continue if prop or rBrace  # ordinal chars
+    pushSubstring: (start, end, {trim} = {}) ->
+      @pushString @str.substring(start, end), {trim}
 
-      tokens.pushString str.substring lastEnd, matchStart
-
-      switch
-        when name
-          tokens.push VariableExpandNode.wrap new StringNode name
-
-        when lBrace
-          tokens.push @parseString str, re  # re object is stateful
-
-        when prop or rBrace
-          nameNode = tokens.flush()
-          retNode =
-            unless retNode?
-              VariableExpandNode.wrap nameNode
-            else
-              PropertyGetNode.wrap retNode, name: nameNode
-
-          if rBrace
-            return retNode
-
-      lastEnd = re.lastIndex - escaped?  # to grab an escaped char later on
-
-    if isExpansion  # should have exited upon reaching the closing rBrace
-      throw new CompileError "Unterminated variable expansion
-                              '${#{str.substring start}'"
-
-    tokens.pushString str.substring lastEnd
-    tokens.flush()
+  error: (msg) ->
+    new ParseError msg
 
 
-class AssemblePass extends NodeVisitor
+class AssemblePass extends NodeTranslator
 
   class PropertyDescriptor
     @:: = Object.create null
@@ -353,15 +500,10 @@ class AssemblePass extends NodeVisitor
   visitStringNode: ({object: str}) ->
     property value: str
 
-  visitVariableExpandNode: ({name}) ->
-    {value, get} = @fieldVisit.node name
+  visitThisNode: ->
+    property get: -> this
 
-    if get?
-      property get: -> @[get.apply this]
-    else  # probably a hot path
-      property get: -> @[value]
-
-  visitPropertyGetNode: ({target, name}) ->
+  visitPropertyNode: ({target, name}) ->
     targetDescriptor = @fieldVisit.node target
     nameDescriptor = @fieldVisit.node name
 
@@ -371,20 +513,37 @@ class AssemblePass extends NodeVisitor
 
       targetExpansion[nameExpansion]
 
-  visitCallNode: ({target, args}) ->
-    unless args instanceof ArrayNode
-      args = new ArrayNode args.object, sequence: [args]
-
+  visitMethodCallNode: ({target, name, args}) ->
     targetDescriptor = @fieldVisit.node target
-    argsDescriptor = @fieldVisit.node args
+    nameDescriptor = @fieldVisit.node name
+    argsDescriptor = @assembleArray args
+
+    property get: ->
+      targetExpansion = targetDescriptor.apply this
+      argsExpansion = argsDescriptor.apply this
+      nameExpansion = nameDescriptor.apply this
+
+      targetExpansion[nameExpansion].apply targetExpansion, argsExpansion
+
+  visitFunctionCallNode: ({target, args}) ->
+    targetDescriptor = @fieldVisit.node target
+    argsDescriptor = @assembleArray args
 
     property get: ->
       targetExpansion = targetDescriptor.apply this
       argsExpansion = argsDescriptor.apply this
 
-      targetExpansion.apply this, argsExpansion
+      targetExpansion.apply targetExpansion, argsExpansion
 
-  visitStringJoinNode: ({array}) ->
+  visitDefaultValueNode: ({target, fallback}) ->
+    targetDescriptor = @fieldVisit.node target
+    fallbackDescriptor = @fieldVisit.node fallback
+
+    property get: ->
+      targetExpansion = targetDescriptor.apply this
+      targetExpansion ? fallbackDescriptor.apply this
+
+  visitStringJoinNode: ({array, object}) ->
     tokenArrayDescriptor = @fieldVisit.node array
     property get: ->
       tokenArrayExpansion = tokenArrayDescriptor.apply this
@@ -411,6 +570,9 @@ class AssemblePass extends NodeVisitor
 
 
   visitArrayNode: ({sequence}) ->
+    @assembleArray sequence
+
+  assembleArray: (sequence) ->
     itemDescriptorList = @fieldVisit.sequence sequence
 
     property get: ->
@@ -460,10 +622,13 @@ class AssemblePass extends NodeVisitor
 
 class CompilerBase
 
-  class @Scope
+  class ScopeBase
     @:: = Object.create null
     @::constructor = this
     constructor: (@__compiler) ->
+
+  class @Scope extends ScopeBase
+    _: _
 
   constructor: ->
     @rootScope = new @constructor.Scope this
@@ -489,9 +654,12 @@ class Compiler extends CompilerBase
   class @Scope extends @Scope
     __dirname: '.'
 
-    include: (filename) ->
+    __include: (filename) ->
       filename = path.resolve @__dirname, filename
       @__compiler.evalFile filename, this
+
+    include: ->
+      @__include arguments...
 
   constructor: (@options = {}) ->
     super
@@ -526,6 +694,7 @@ expandFile = (filename, variables, options) ->
 
 class TemplateError extends NodeVisitorError
 class CompileError extends TemplateError
+class ParseError extends CompileError
 class ExpandError extends TemplateError
 
 
@@ -544,8 +713,13 @@ module.exports = {
   WrapperNode
   ScopeNode
   AssignNode
-  VariableExpandNode
-  PropertyGetNode
+
+  ThisNode
+  PropertyNode
+  CallNode
+  FunctionCallNode
+  MethodCallNode
+  DefaultValueNode
   StringJoinNode
 
   nodeFromObject
@@ -561,5 +735,6 @@ module.exports = {
 
   TemplateError
   CompileError
+  ParseError
   ExpandError
 }

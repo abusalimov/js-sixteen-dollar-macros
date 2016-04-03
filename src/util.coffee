@@ -43,6 +43,18 @@ allProperties = (object, stopPredicate = isPrototype) ->
   properties
 
 
+reverseString = (str) ->
+  str.split('').reverse().join('')
+
+
+truncateLeft = (str, options = {}) ->
+  if _.isRegExp options.separator
+    throw new TypeError "truncateLeft doesn't support RegExp as a separator"
+  options.separator = reverseString options.separator if options.separator?
+  options.omission  = reverseString options.omission  if options.omission?
+  reverseString _.truncate reverseString(str), options
+
+
 # Workaround for jashkenas/coffeescript#2359-related oddities
 # ("default constructor for subclasses of native objects")
 class BaseError extends Error
@@ -62,6 +74,9 @@ module.exports = {
 
   isPrototype
   allProperties
+
+  reverseString
+  truncateLeft
 
   BaseError
 }
